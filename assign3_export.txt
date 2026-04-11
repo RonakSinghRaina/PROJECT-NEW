@@ -1,0 +1,541 @@
+# CELL 0 (markdown)
+## Third Assignment 
+
+# CELL 1 (markdown)
+## Problem 1 
+1. Using the rejection sampling technique, sample from the following distribution
+$f(x) = x^2 (sin(2\pi x))^2$    between the limits of $x = [-1,1]$. 
+
+# CELL 2 (code)
+
+
+# CELL 3 (code)
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.integrate import quad
+
+# Define the target distribution f(x) = x^2 * (sin(2*pi*x))^2
+def f(x):
+    return x**2 * (np.sin(2 * np.pi * x))**2
+
+# --- Rejection Sampling ---
+# Step 1: Find the maximum value of f(x) on [-1, 1] to use as the envelope height M
+x_fine = np.linspace(-1, 1, 10000)
+f_max = np.max(f(x_fine))
+print(f'Maximum of f(x) on [-1,1]: {f_max:.6f}')
+
+# We use a uniform proposal distribution g(x) = 1/2 on [-1,1]
+# The envelope is M = f_max (since we compare u ~ Uniform(0, f_max) against f(x))
+
+# Step 2: Perform rejection sampling
+N_samples = 100000  # number of desired samples
+accepted = []
+n_total = 0  # total number of proposals
+
+np.random.seed(42)
+
+while len(accepted) < N_samples:
+    # Sample x uniformly from [-1, 1]
+    x_candidate = np.random.uniform(-1, 1)
+    # Sample u uniformly from [0, f_max]
+    u = np.random.uniform(0, f_max)
+    n_total += 1
+    # Accept if u <= f(x_candidate)
+    if u <= f(x_candidate):
+        accepted.append(x_candidate)
+
+accepted = np.array(accepted)
+print(f'Number of accepted samples: {len(accepted)}')
+print(f'Total proposals: {n_total}')
+print(f'Acceptance rate: {len(accepted)/n_total:.4f}')
+
+# Step 3: Plot the results
+fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+# Left: Histogram of accepted samples vs true (normalized) distribution
+x_plot = np.linspace(-1, 1, 500)
+norm_const, _ = quad(f, -1, 1)
+f_normalized = f(x_plot) / norm_const
+
+axes[0].hist(accepted, bins=100, density=True, alpha=0.7, color='steelblue', label='Rejection Samples')
+axes[0].plot(x_plot, f_normalized, 'r-', linewidth=2, label=r'$f(x)/C$ (normalized)')
+axes[0].set_xlabel('x', fontsize=12)
+axes[0].set_ylabel('Density', fontsize=12)
+axes[0].set_title('Rejection Sampling from $f(x) = x^2 \\sin^2(2\\pi x)$', fontsize=13)
+axes[0].legend(fontsize=11)
+
+# Right: The original target function (unnormalized)
+axes[1].plot(x_plot, f(x_plot), 'b-', linewidth=2)
+axes[1].axhline(y=f_max, color='r', linestyle='--', alpha=0.5, label=f'f_max = {f_max:.4f}')
+axes[1].set_xlabel('x', fontsize=12)
+axes[1].set_ylabel('f(x)', fontsize=12)
+axes[1].set_title('Target Distribution $f(x) = x^2 \\sin^2(2\\pi x)$', fontsize=13)
+axes[1].legend(fontsize=11)
+
+plt.tight_layout()
+plt.show()
+
+print(f'Normalization constant C = {norm_const:.6f}')
+
+# CELL 4 (markdown)
+# Problem 2 
+2. Using the data provided in the Solar_spectrum.dat file, model the shape of the spectrum using a blackbody
+   
+(a) using the maximum likelihood approach.
+
+(b) Estimate the blackbody temperature.
+
+(c) Make a residuals plot.
+
+(d) Estimate the goodness of fit.
+
+(e) Compare the blackbody model with blackbody + power law. Which is a better model? How did you come to this inference?
+
+(f) What is the p-value of the blackbody + power law model?
+
+(g) Estimate the blackbody temperature using the bayesian inference technique.
+
+(h) Make a corner plot for the posterior distribution of the blackbody temperature.
+
+(i) Compare the temperature estimate obtained using Maximum likelihood estimate and Bayesian analysis.
+
+
+# CELL 5 (code)
+import numpy as np
+import matplotlib.pyplot as plt
+import csv
+import os
+
+paths_to_try = [
+    os.path.join("DataSets (1)", "DataSets", "Solar_spectrum_data.csv"),
+    os.path.join(os.path.expanduser("~"), "Downloads", "DataSets (1)", "DataSets", "Solar_spectrum_data.csv"),
+    "Solar_spectrum_data.csv",
+]
+solar_path = None
+for p in paths_to_try:
+    if os.path.isfile(p):
+        solar_path = p
+        break
+if solar_path is None:
+    raise FileNotFoundError("Solar_spectrum_data.csv not found")
+
+wavelength = []
+flux = []
+flux_err = []
+with open(solar_path, newline="") as f:
+    reader = csv.reader(f)
+    next(reader)
+    for row in reader:
+        if len(row) < 3:
+            continue
+        wavelength.append(float(row[0]))
+        flux.append(float(row[1]))
+        flux_err.append(float(row[2]))
+
+wavelength = np.array(wavelength)
+flux = np.array(flux)
+flux_err = np.array(flux_err)
+n_data = len(wavelength)
+
+fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+for ax in axes:
+    ax.errorbar(
+        wavelength,
+        flux,
+        yerr=flux_err,
+        fmt=".",
+        markersize=2,
+        color="#00008B",
+        ecolor="black",
+        elinewidth=0.35,
+        alpha=0.55,
+    )
+axes[0].set_xlim(0, 5)
+axes[0].set_xlabel("wavelength (microns)")
+axes[0].set_ylabel("E")
+axes[1].set_xscale("log")
+axes[1].set_yscale("log")
+axes[1].set_xlabel("wavelength (microns)")
+axes[1].set_ylabel("E")
+plt.tight_layout()
+plt.show()
+
+
+# CELL 6 (code)
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.optimize import minimize
+
+h = 6.626e-34
+c = 3.0e8
+k_B = 1.381e-23
+
+
+def blackbody(lam_micron, T, A):
+    lam_m = lam_micron * 1e-6
+    exponent = h * c / (lam_m * k_B * T)
+    if exponent < 0:
+        exponent = 0
+    if exponent > 500:
+        exponent = 500
+    top = 2.0 * h * c**2 / lam_m**5
+    bottom = np.exp(exponent) - 1.0
+    return A * top / bottom * 1e-6
+
+
+def neg_log_like_bb(params):
+    T, A = params[0], params[1]
+    if T <= 0 or A <= 0:
+        return 1e20
+    total = 0.0
+    for i in range(n_data):
+        m = blackbody(wavelength[i], T, A)
+        if m <= 0 or np.isnan(m):
+            return 1e20
+        r = (flux[i] - m) / flux_err[i]
+        total += 0.5 * (r * r + np.log(2 * np.pi * flux_err[i] ** 2))
+    return total
+
+
+result_bb = minimize(
+    neg_log_like_bb,
+    [5800.0, 1.0],
+    method="Nelder-Mead",
+    options={"maxiter": 50000, "xatol": 0.1, "fatol": 0.01},
+)
+T_mle = result_bb.x[0]
+A_mle = result_bb.x[1]
+print("T (K) =", round(T_mle, 2))
+print("A =", A_mle)
+
+flux_mle = np.zeros(n_data)
+for i in range(n_data):
+    flux_mle[i] = blackbody(wavelength[i], T_mle, A_mle)
+
+lam_smooth = np.linspace(wavelength.min(), wavelength.max(), 2000)
+flux_smooth = np.zeros(len(lam_smooth))
+for j in range(len(lam_smooth)):
+    flux_smooth[j] = blackbody(lam_smooth[j], T_mle, A_mle)
+
+fig, axes = plt.subplots(1, 2, figsize=(11, 4))
+for ax in axes:
+    ax.errorbar(
+        wavelength,
+        flux,
+        yerr=flux_err,
+        fmt=".",
+        markersize=2,
+        color="#00008B",
+        ecolor="black",
+        elinewidth=0.35,
+        alpha=0.55,
+    )
+    ax.plot(lam_smooth, flux_smooth, color="black", linewidth=2,label=f'MLE Blackbody (T={T_mle:.0f} K')
+    ax.set_xlabel("wavelength (microns)")
+    ax.set_ylabel("E")
+axes[0].set_xlim(0, 5)
+axes[0].legend()
+axes[0].set_title('(a)-(b) MLE Blackbody Fit (Linear)')
+axes[1].set_xscale("log")
+axes[1].set_yscale("log")
+axes[1].set_title('(a)-(b) MLE Blackbody Fit (Log-Log)')
+axes[1].legend(fontsize=11)
+plt.tight_layout()
+plt.show()
+
+
+# CELL 7 (code)
+residuals_bb = np.zeros(n_data)
+norm_resid_bb = np.zeros(n_data)
+for i in range(n_data):
+    residuals_bb[i] = flux[i] - flux_mle[i]
+    norm_resid_bb[i] = residuals_bb[i] / flux_err[i]
+
+fig, axes = plt.subplots(2, 1, figsize=(10, 6), gridspec_kw={"height_ratios": [2, 1]})
+axes[0].errorbar(
+    wavelength,
+    flux,
+    yerr=flux_err,
+    fmt=".",
+    markersize=2,
+    color="#00008B",
+    ecolor="black",
+    elinewidth=0.35,
+    alpha=0.55,
+)
+axes[0].plot(lam_smooth, flux_smooth, color="black", linewidth=2)
+axes[0].set_ylabel("E")
+axes[0].set_xlim(0, 5)
+
+wx = []
+ny = []
+for i in range(n_data):
+    if wavelength[i] < 5:
+        wx.append(wavelength[i])
+        ny.append(norm_resid_bb[i])
+axes[1].scatter(wx, ny, s=4, alpha=0.65, color="#00008B", edgecolors="black", linewidths=0.2)
+axes[1].axhline(0, color="black", linestyle="--")
+axes[1].set_xlabel("wavelength (microns)")
+axes[1].set_ylabel("(data - model) / error")
+axes[1].set_xlim(0, 5)
+
+plt.tight_layout()
+plt.show()
+
+normalized_residuals_bb = norm_resid_bb
+
+
+# CELL 8 (code)
+from scipy.stats import chi2 as chi2_dist
+
+chi2_bb = 0.0
+for i in range(n_data):
+    chi2_bb += norm_resid_bb[i] ** 2
+
+n_params_bb = 2
+dof_bb = n_data - n_params_bb
+chi2_reduced_bb = chi2_bb / dof_bb
+p_value_bb = 1.0 - chi2_dist.cdf(chi2_bb, dof_bb)
+
+print("chi2 =", round(chi2_bb, 2))
+print("dof =", dof_bb)
+print("reduced chi2 =", round(chi2_reduced_bb, 4))
+print("p-value =", p_value_bb)
+if chi2_reduced_bb > 2:
+    print("reduced chi2 > 2")
+elif chi2_reduced_bb < 0.5:
+    print("reduced chi2 < 0.5")
+else:
+    print("reduced chi2 near 1")
+
+
+# CELL 9 (code)
+from scipy.optimize import minimize
+from scipy.stats import chi2 as chi2_dist
+
+
+def blackbody_powerlaw(lam_micron, T, A, alpha, B):
+    return blackbody(lam_micron, T, A) + B * lam_micron**alpha
+
+
+def neg_log_like_bbpl(params):
+    T, A, alpha, B = params[0], params[1], params[2], params[3]
+    if T <= 0 or A <= 0:
+        return 1e20
+    total = 0.0
+    for i in range(n_data):
+        m = blackbody_powerlaw(wavelength[i], T, A, alpha, B)
+        if m <= 0 or np.isnan(m):
+            return 1e20
+        r = (flux[i] - m) / flux_err[i]
+        total += 0.5 * (r * r + np.log(2 * np.pi * flux_err[i] ** 2))
+    return total
+
+
+result_bb_pl = minimize(
+    neg_log_like_bbpl,
+    [T_mle, A_mle, -2.0, 1.0],
+    method="Nelder-Mead",
+    options={"maxiter": 100000, "xatol": 0.1, "fatol": 0.01},
+)
+T_mle2, A_mle2, alpha_mle, B_mle = result_bb_pl.x
+print("T =", round(T_mle2, 2), "A =", A_mle2, "alpha =", alpha_mle, "B =", B_mle)
+
+flux_mle_bb_pl = np.zeros(n_data)
+norm_resid_bb_pl = np.zeros(n_data)
+for i in range(n_data):
+    flux_mle_bb_pl[i] = blackbody_powerlaw(wavelength[i], T_mle2, A_mle2, alpha_mle, B_mle)
+    norm_resid_bb_pl[i] = (flux[i] - flux_mle_bb_pl[i]) / flux_err[i]
+
+chi2_bb_pl = sum(norm_resid_bb_pl[i] ** 2 for i in range(n_data))
+n_params_bb_pl = 4
+dof_bb_pl = n_data - n_params_bb_pl
+chi2_red_bb_pl = chi2_bb_pl / dof_bb_pl
+p_value_bb_pl = 1.0 - chi2_dist.cdf(chi2_bb_pl, dof_bb_pl)
+
+print("BB chi2 =", round(chi2_bb, 2), "BB+PL chi2 =", round(chi2_bb_pl, 2))
+print("BB+PL p-value =", p_value_bb_pl)
+
+delta_chi2 = chi2_bb - chi2_bb_pl
+delta_dof = n_params_bb_pl - n_params_bb
+p_value_lrt = 1.0 - chi2_dist.cdf(delta_chi2, delta_dof)
+print("delta chi2 =", round(delta_chi2, 2), "LRT p =", p_value_lrt)
+
+lam_smooth2 = np.linspace(wavelength.min(), 5, 2000)
+flux_bb_line = np.array([blackbody(lam_smooth2[j], T_mle, A_mle) for j in range(len(lam_smooth2))])
+flux_bbpl_line = np.array(
+    [blackbody_powerlaw(lam_smooth2[j], T_mle2, A_mle2, alpha_mle, B_mle) for j in range(len(lam_smooth2))]
+)
+
+mask5 = wavelength < 5
+fig, axes = plt.subplots(2, 1, figsize=(10, 6), gridspec_kw={"height_ratios": [2, 1]})
+axes[0].errorbar(
+    wavelength[mask5],
+    flux[mask5],
+    yerr=flux_err[mask5],
+    fmt=".",
+    markersize=2,
+    color="#00008B",
+    ecolor="black",
+    elinewidth=0.35,
+    alpha=0.55,
+)
+axes[0].plot(lam_smooth2, flux_bb_line, color="black", linewidth=2)
+axes[0].plot(lam_smooth2, flux_bbpl_line, color="#00008B", linewidth=2, linestyle="--")
+axes[0].set_ylabel("E")
+
+wx = wavelength[mask5]
+axes[1].scatter(wx, norm_resid_bb[mask5], s=4, alpha=0.55, color="black", label="BB")
+axes[1].scatter(wx, norm_resid_bb_pl[mask5], s=4, alpha=0.55, color="#00008B", label="BB+PL")
+axes[1].axhline(0, color="black", linestyle=":", linewidth=0.9)
+axes[1].set_xlabel("wavelength (microns)")
+axes[1].set_ylabel("normalized residual")
+axes[1].legend(frameon=False, fontsize=8)
+
+plt.tight_layout()
+plt.show()
+
+
+# CELL 10 (code)
+import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
+
+def log_prior_val(T, A):
+    if 1000 < T < 20000 and 0.001 < A < 100.0:
+        return 0.0
+    return -np.inf
+
+
+def log_like_val(T, A):
+    s = 0.0
+    for i in range(n_data):
+        m = blackbody(wavelength[i], T, A)
+        if m <= 0 or np.isnan(m):
+            return -np.inf
+        r = (flux[i] - m) / flux_err[i]
+        s += r * r + np.log(2 * np.pi * flux_err[i] ** 2)
+    return -0.5 * s
+
+
+def log_post_val(T, A):
+    lp = log_prior_val(T, A)
+    if lp == -np.inf:
+        return -np.inf
+    ll = log_like_val(T, A)
+    if not np.isfinite(ll):
+        return -np.inf
+    return lp + ll
+
+
+nT = 55
+nA = 45
+T_lo = max(1000.0, T_mle - 2500.0)
+T_hi = min(20000.0, T_mle + 2500.0)
+T_grid = np.linspace(T_lo, T_hi, nT)
+logA0 = np.log10(max(A_mle, 1e-12))
+A_grid = np.logspace(logA0 - 2.0, logA0 + 2.0, nA)
+
+log_post_grid = np.empty((nT, nA))
+for i in range(nT):
+    for j in range(nA):
+        log_post_grid[i, j] = log_post_val(T_grid[i], A_grid[j])
+
+lp_max = np.nanmax(log_post_grid)
+w = np.exp(log_post_grid - lp_max)
+w = np.where(np.isfinite(w), w, 0.0)
+w_sum = w.sum()
+if w_sum <= 0:
+    raise RuntimeError("posterior grid has zero mass; widen grid or check model")
+post = w / w_sum
+
+p_T = post.sum(axis=1)
+p_A = post.sum(axis=0)
+
+def discrete_percentile(x_vals, p_x, q):
+    c = np.cumsum(p_x)
+    if c[-1] <= 0:
+        return float(x_vals[len(x_vals) // 2])
+    c = c / c[-1]
+    k = int(np.searchsorted(c, q))
+    k = min(max(k, 0), len(x_vals) - 1)
+    return float(x_vals[k])
+
+T_bayes = discrete_percentile(T_grid, p_T, 0.5)
+T_16 = discrete_percentile(T_grid, p_T, 0.16)
+T_84 = discrete_percentile(T_grid, p_T, 0.84)
+A_bayes = discrete_percentile(A_grid, p_A, 0.5)
+
+print("Bayesian T (grid, ~median) =", round(T_bayes, 1), "K")
+print("  rough 16–84% from grid:", round(T_16, 1), "–", round(T_84, 1), "K")
+print("Bayesian A (grid, ~median) =", A_bayes)
+
+fig = plt.figure(figsize=(7.5, 7))
+gs = gridspec.GridSpec(2, 2, width_ratios=[1, 2.2], height_ratios=[2.2, 1], hspace=0.08, wspace=0.08)
+ax_a = fig.add_subplot(gs[0, 1])
+ax_t = fig.add_subplot(gs[1, 0])
+ax_j = fig.add_subplot(gs[1, 1])
+ax_empty = fig.add_subplot(gs[0, 0])
+ax_empty.axis("off")
+
+T2d, A2d = np.meshgrid(T_grid, A_grid, indexing="ij")
+ax_j.pcolormesh(T2d, A2d, post, shading="auto", cmap="Blues")
+ax_j.set_yscale("log")
+ax_j.set_xlabel("T (K)")
+ax_j.set_ylabel("A")
+ax_j.axvline(T_mle, color="black", linewidth=1, linestyle="--")
+ax_j.axhline(A_mle, color="black", linewidth=1, linestyle="--")
+
+ax_t.plot(p_T, T_grid, color="#00008B", linewidth=1.5)
+ax_t.fill_betweenx(T_grid, 0, p_T, color="#00008B", alpha=0.25)
+ax_t.set_ylim(T_grid[0], T_grid[-1])
+ax_t.invert_xaxis()
+ax_t.set_xlabel("P(T|data)")
+ax_t.set_ylabel("T (K)")
+
+ax_a.plot(A_grid, p_A, color="#00008B", linewidth=1.5)
+ax_a.fill_between(A_grid, 0, p_A, color="#00008B", alpha=0.25)
+ax_a.set_xlim(A_grid[0], A_grid[-1])
+ax_a.set_xscale("log")
+ax_a.set_ylabel("P(A|data)")
+ax_a.set_xlabel("A")
+
+plt.show()
+
+print("MLE T =", round(T_mle, 1), "grid Bayes T =", round(T_bayes, 1))
+print("MLE A =", A_mle, "grid Bayes A =", A_bayes)
+
+
+# CELL 11 (markdown)
+## Problem 3 - Conceptual question
+A university is considering a new selection process for admitting students into its honors program. To be admitted, students must take an entrance test. The university wants to ensure that only truly qualified students are accepted.
+
+Null Hypothesis ($H_0$): The student is not qualified for the honors program.
+Alternative Hypothesis ($H_1$): The student is qualified for the honors program.
+
+The decision-making process can lead to two types of errors:
+
+**Type 1 Error (False Positive): The university admits an unqualified student.**
+**Type 2 Error (False Negative): The university rejects a qualified student.**
+
+**Question:**
+
+Which type of error is more concerning for the university? Explain your reasoning based on the potential impact on the honors program and the students.
+
+# CELL 12 (code)
+
+
+# CELL 13 (code)
+print(
+    '''
+In this case, the university should be more concerned with Type 1 error.
+
+Type 1 error involves accepting an individual that does not meet the requirements.
+This has adverse effects on the honors program as the standards are lowered,
+teaching becomes difficult, and resources are allocated to individuals who cannot perform.
+
+Type 2 error involves rejecting an individual who meets the requirements.
+Although this may be unfair to the student, he/she can perform well in the normal program.
+
+Thus, prioritizing the quality of the program generally raises Type 1 error concerns.
+'''
+)
